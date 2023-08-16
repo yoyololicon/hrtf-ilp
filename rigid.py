@@ -29,7 +29,7 @@ def toa_model(P, r, az0, az1, incli0, incli1, delta, sr):
     return y
 
 
-def get_rigid_params(toa, xyz, sr):
+def get_rigid_params(toa, xyz, sr, verbose=True):
     assert toa.shape[0] == xyz.shape[0]
 
     def toa_func(P, r, az0, az1, incli0, incli1, delta):
@@ -49,15 +49,16 @@ def get_rigid_params(toa, xyz, sr):
     delay = rigid_toa.mean() / sr - popt[-1] / sr
     perr = np.sqrt(np.diag(pcov))
 
-    print(f"Rigid sphere radius: {popt[0] * 100} cm (error: {perr[0] * 100})")
-    print(f"IR offset: {popt[-2] / sr * 1000} ms (error: {perr[-2] / sr * 1000})")
-    print(
-        f"Left ear position: {popt[1] / np.pi * 180}, {popt[3] / np.pi * 180} (az/co) (error: {perr[1] / np.pi * 180}, {perr[3] / np.pi * 180})"
-    )
-    print(
-        f"Right ear position: {popt[2] / np.pi * 180 - 360}, {popt[4] / np.pi * 180} (az/co) (error: {perr[2] / np.pi * 180}, {perr[4] / np.pi * 180})",
-    )
-    print(f"Average delay: {delay * 1000} ms (error: {perr[-1] / sr * 1000})")
+    if verbose:
+        print(f"Rigid sphere radius: {popt[0] * 100} cm (error: {perr[0] * 100})")
+        print(f"IR offset: {popt[-2] / sr * 1000} ms (error: {perr[-2] / sr * 1000})")
+        print(
+            f"Left ear position: {popt[1] / np.pi * 180}, {popt[3] / np.pi * 180} (az/co) (error: {perr[1] / np.pi * 180}, {perr[3] / np.pi * 180})"
+        )
+        print(
+            f"Right ear position: {popt[2] / np.pi * 180 - 360}, {popt[4] / np.pi * 180} (az/co) (error: {perr[2] / np.pi * 180}, {perr[4] / np.pi * 180})",
+        )
+        print(f"Average delay: {delay * 1000} ms (error: {perr[-1] / sr * 1000})")
 
     return {
         k: v for k, v in zip(["r", "az0", "az1", "incli0", "incli1", "delta"], popt)

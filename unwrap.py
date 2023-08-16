@@ -16,7 +16,7 @@ def delay2phase(delay, freqs, sr):
     return -delay * (freqs / sr * 2 * np.pi)
 
 
-def puma(psi, edges, max_jump=1, p=1):
+def puma(psi, edges, max_jump=1, p=1, verbose=False):
     if max_jump > 1:
         jump_steps = list(range(1, max_jump + 1)) * 2
     else:
@@ -37,7 +37,7 @@ def puma(psi, edges, max_jump=1, p=1):
     prev_Ek = cal_Ek(K, psi, edges[:, 0], edges[:, 1])
 
     energy_list = []
-    with tqdm() as pbar:
+    with tqdm(disable=not verbose) as pbar:
         for step in jump_steps:
             while 1:
                 energy_list.append(prev_Ek)
@@ -85,13 +85,78 @@ def puma(psi, edges, max_jump=1, p=1):
     return psi + 2 * np.pi * K
 
 
-def puma_hrtf_phase(wrapped_phase, edges, max_jump=1, p=1):
+def puma_hrtf_phase(wrapped_phase, edges, max_jump=1, p=1, **kwargs):
     assert wrapped_phase.ndim == 2
 
-    unwrapped_phase = puma(wrapped_phase.flatten(), edges, max_jump, p=p).reshape(
-        wrapped_phase.shape
-    )
+    unwrapped_phase = puma(
+        wrapped_phase.flatten(), edges, max_jump, p=p, **kwargs
+    ).reshape(wrapped_phase.shape)
     return unwrapped_phase
+
+
+def unwrap(
+    hrir: np.ndarray,
+    xyz: np.ndarray,
+    sr: int,
+    method: str,
+    equalize: bool,
+    stereo_proj: bool = False,
+    p: float = 1.0,
+    verbose: bool = True,
+) -> dict:
+    N, _, n_fft = hrir.shape
+
+    hrtf = np.fft.rfft(hrir, axis=2)
+    freqs = np.fft.rfftfreq(n_fft, 1 / sr)
+    phase = np.angle(hrtf[..., 1:])
+
+    save_dict = {}
+
+    if equalize:
+        toa = hrtf_toa(hrir)
+        params = get_rigid_params(toa, xyz, sr, verbose=verbose)
+        save_dict.update(params)
+        smoothed_toa = toa_model(xyz, sr=sr, **params)
+
+        linear_phase = delay2phase(smoothed_toa[..., None], freqs[1:], sr)
+        phase -= linear_phase
+        phase = (phase + np.pi) % (2 * np.pi) - np.pi
+
+    if method == "naive":
+        unwrapped_phase = np.unwrap(phase, axis=2)
+    elif method == "maxflow":
+        G = plus_freq_dim(points2graph(xyz, stereo_proj), freqs.size - 1)
+        edges = np.array(G.edges)
+        if verbose:
+            print(f"Number of edges: {edges.shape[0]}")
+        unwrapped_phase = np.stack(
+            (
+                puma_hrtf_phase(phase[:, 0, :].T, edges, p=p, verbose=verbose).T,
+                puma_hrtf_phase(phase[:, 1, :].T, edges, p=p, verbose=verbose).T,
+            ),
+            axis=1,
+        )
+    else:
+        raise ValueError(f"Unknown method {method}")
+
+    if equalize:
+        unwrapped_phase += linear_phase
+
+    # callibrate phase
+    left_offset = np.round(
+        np.mean(unwrapped_phase[:, 0, 0] - phase[:, 0, 0]) / 2 / np.pi
+    )
+    unwrapped_phase[:, 0] -= left_offset * 2 * np.pi
+    right_offset = np.round(
+        np.mean(unwrapped_phase[:, 1, 0] - phase[:, 1, 0]) / 2 / np.pi
+    )
+    unwrapped_phase[:, 1] -= right_offset * 2 * np.pi
+
+    phase_delay = phase2delay(unwrapped_phase, freqs[1:], sr)
+    save_dict["magnitude"] = np.abs(hrtf)
+    save_dict["phase_delay"] = phase_delay
+
+    return save_dict
 
 
 def main():
@@ -131,56 +196,16 @@ def main():
     radius = hrir.grid.radius
     hrir_signal = np.stack((hrir.l.signal, hrir.r.signal), axis=1)
     hrir_xyz = sfa.utils.sph2cart((az, col, radius)).T
-    N, _, n_fft = hrir_signal.shape
 
-    hrtf = np.fft.rfft(hrir_signal, axis=2)
-    freqs = np.fft.rfftfreq(n_fft, 1 / sr)
-    phase = np.angle(hrtf[..., 1:])
-
-    save_dict = {}
-
-    if args.equalize:
-        toa = hrtf_toa(hrir_signal)
-        params = get_rigid_params(toa, hrir_xyz, sr)
-        save_dict.update(params)
-        smoothed_toa = toa_model(hrir_xyz, sr=sr, **params)
-
-        linear_phase = delay2phase(smoothed_toa[..., None], freqs[1:], sr)
-        phase -= linear_phase
-        phase = (phase + np.pi) % (2 * np.pi) - np.pi
-
-    if args.method == "naive":
-        unwrapped_phase = np.unwrap(phase, axis=2)
-    elif args.method == "maxflow":
-        G = plus_freq_dim(points2graph(hrir_xyz, args.stereo_proj), freqs.size - 1)
-        edges = np.array(G.edges)
-        print(f"Number of edges: {edges.shape[0]}")
-        unwrapped_phase = np.stack(
-            (
-                puma_hrtf_phase(phase[:, 0, :].T, edges, p=args.p).T,
-                puma_hrtf_phase(phase[:, 1, :].T, edges, p=args.p).T,
-            ),
-            axis=1,
-        )
-    else:
-        raise ValueError(f"Unknown method {args.method}")
-
-    if args.equalize:
-        unwrapped_phase += linear_phase
-
-    # callibrate phase
-    left_offset = np.round(
-        np.mean(unwrapped_phase[:, 0, 0] - phase[:, 0, 0]) / 2 / np.pi
+    save_dict = unwrap(
+        hrir_signal,
+        hrir_xyz,
+        sr,
+        method=args.method,
+        equalize=args.equalize,
+        stereo_proj=args.stereo_proj,
+        p=args.p,
     )
-    unwrapped_phase[:, 0] -= left_offset * 2 * np.pi
-    right_offset = np.round(
-        np.mean(unwrapped_phase[:, 1, 0] - phase[:, 1, 0]) / 2 / np.pi
-    )
-    unwrapped_phase[:, 1] -= right_offset * 2 * np.pi
-
-    phase_delay = phase2delay(unwrapped_phase, freqs[1:], sr)
-    save_dict["magnitude"] = np.abs(hrtf)
-    save_dict["phase_delay"] = phase_delay
     save_dict["coordinates"] = hrir_xyz
     save_dict["sr"] = sr
 
