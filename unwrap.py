@@ -16,6 +16,10 @@ def delay2phase(delay, freqs, sr):
     return -delay * (freqs / sr * 2 * np.pi)
 
 
+def wrap(x):
+    return (x + np.pi) % (2 * np.pi) - np.pi
+
+
 def puma(psi, edges, max_jump=1, p=1, verbose=False):
     if max_jump > 1:
         jump_steps = list(range(1, max_jump + 1)) * 2
@@ -120,7 +124,7 @@ def unwrap(
 
         linear_phase = delay2phase(smoothed_toa[..., None], freqs[1:], sr)
         phase -= linear_phase
-        phase = (phase + np.pi) % (2 * np.pi) - np.pi
+        phase = wrap(phase)
 
     if method == "naive":
         unwrapped_phase = np.unwrap(phase, axis=2)
@@ -136,6 +140,17 @@ def unwrap(
             ),
             axis=1,
         )
+    elif method == "sphere":
+        G = points2graph(xyz, stereo_proj)
+        edges = np.array(G.edges)
+        if verbose:
+            print(f"Number of edges: {edges.shape[0]}")
+        unwrapped_phase = np.unwrap(phase, axis=2)
+        for i in range(2):
+            for j in range(freqs.size - 1):
+                unwrapped = puma(phase[:, i, j], edges, p=p, verbose=verbose)
+                offset = np.median(unwrapped_phase[:, i, j] - unwrapped)
+                unwrapped_phase[:, i, j] = unwrapped + offset
     else:
         raise ValueError(f"Unknown method {method}")
 
@@ -170,7 +185,7 @@ def main():
         help="Path to output file containing the unwrapped phase and meta data.",
     )
     parser.add_argument(
-        "--method", type=str, choices=["naive", "maxflow"], default="maxflow"
+        "--method", type=str, choices=["naive", "maxflow", "sphere"], default="maxflow"
     )
     parser.add_argument(
         "--equalize", action="store_true", help="Equalize the phase of the HRTF."
