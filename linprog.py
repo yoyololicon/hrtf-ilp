@@ -60,8 +60,11 @@ def solve_linprog(
 
     if c is None:
         c = np.ones((M * 2,), dtype=np.int64)
+    else:
+        c = np.tile(c, 2)
 
     res = linprog(c, A_eq=A_eq, b_eq=b_eq, integrality=1, options=options)
+    print(res)
     k = res.x[:M] - res.x[M:]
     k = k.astype(np.int64)
     cost = np.abs(V @ k + y).sum()
