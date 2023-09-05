@@ -8,7 +8,7 @@ from scipy import sparse as sp
 from typing import Tuple, Iterable
 
 from rigid import hrtf_toa
-from graph import stereographic_projection, points2graph
+from graph import stereographic_projection
 from linprog import solve_linprog
 from utils import has_hole_at_the_bottom
 
@@ -105,15 +105,17 @@ def smooth_toa_l2_core(
     return toa
 
 
-def smooth_toa_l2_with_origin_core(
-    edges: np.ndarray,
-    differences: np.ndarray,
-    weights: np.ndarray,
-    naive_toa: np.ndarray,
-) -> np.ndarray:
-    assert np.min(edges) == -1, "no origin detected"
-    edges = edges + 1
-    raise NotImplementedError
+def angle2weight(angle: np.ndarray, std: float = 8) -> np.ndarray:
+    return np.exp(-angle / std)
+
+
+def dot2angle(vec1: np.ndarray, vec2: np.ndarray) -> np.ndarray:
+    dot = np.clip(np.sum(vec1 * vec2, axis=-1), -1, 1)
+    return np.arccos(dot) / np.pi * 180
+
+
+def dot2weight(vec1: np.ndarray, vec2: np.ndarray, std: float = 8) -> np.ndarray:
+    return angle2weight(dot2angle(vec1, vec2), std)
 
 
 def smooth_toa(
@@ -127,6 +129,7 @@ def smooth_toa(
     max_cross_ms: float = 1.0,
     ignore_toa: bool = False,
     weighted: bool = False,
+    weighting_method: str = "angle",
     toa_weight: float = 1.0,
     verbose: bool = True,
 ) -> np.ndarray:
@@ -145,13 +148,13 @@ def smooth_toa(
 
     if stereo_proj:
         hull = Delaunay(stereographic_projection(-xyz))
-        simplices = hull.simplices
+        hull_simplices = hull.simplices
 
         # add the simplice at the bottom, which is represented as -1 in the neighbor simplices
         mask = hull.neighbors == -1
-        simplex_edges = np.stack((simplices, np.roll(simplices, -1, 1)), axis=2)[
-            np.roll(mask, 1, 1)
-        ]
+        simplex_edges = np.stack(
+            (hull_simplices, np.roll(hull_simplices, -1, 1)), axis=2
+        )[np.roll(mask, 1, 1)]
         G = nx.Graph(simplex_edges.tolist())
         cycles = nx.cycle_basis(G)
         assert len(cycles) == 1, "more than one cycle detected"
@@ -159,23 +162,26 @@ def smooth_toa(
         assert len(bottom_simplex) == len(G.nodes), "bottom simplex is not complete"
         print("Size of the bottom simplex:", len(bottom_simplex))
 
-        simplices = simplices.tolist()
-        simplices.append(bottom_simplex)
+        hull_simplices = hull_simplices.tolist()
+        hull_simplices.append(bottom_simplex)
     else:
         hull = ConvexHull(xyz)
-        simplices = hull.simplices.tolist()
+        hull_simplices = hull.simplices.tolist()
 
-    sphere_edges = simplices2edges(simplices)
+    sphere_edges = simplices2edges(hull_simplices)
 
     if verbose:
-        print(f"Number of sphere simplices: {len(simplices)}")
+        print(f"Number of sphere simplices: {len(hull_simplices)}")
         print(f"Number of sphere edges: {len(sphere_edges)}")
 
     naive_toa, naive_toa_max_corr = hrtf_toa(hrir)
     if verbose:
-        print(f"Maximum correlation: {naive_toa_max_corr.max(0)}")
-        print(f"Minimum correlation: {naive_toa_max_corr.min(0)}")
-        print(f"Maximum delay: {naive_toa.max(0) / sr * 1000} ms")
+        print(
+            f"TOA correlation: max={naive_toa_max_corr.max()}, min={naive_toa_max_corr.min()}"
+        )
+        print(
+            f"TOA delay: max={naive_toa.max(0) / sr * 1000} ms, min={naive_toa.min(0) / sr * 1000} ms"
+        )
 
     # compute cross correlation
     max_cross_samples = int(max_cross_ms * sr / 1000)
@@ -189,10 +195,10 @@ def smooth_toa(
     ), "more than one maximum correlation at the edge of the window, consider increasing 'max_cross_ms'"
     if verbose:
         print(
-            f"Maximum cross correlation: {cross_diff_max_corr.max()}, minimum cross correlation: {cross_diff_max_corr.min()}"
+            f"Cross correlation: max={cross_diff_max_corr.max()}, min={cross_diff_max_corr.min()}"
         )
         print(
-            f"Maximum cross delay: {cross_diff.max() / sr * 1000} ms, minimum cross delay: {cross_diff.min() / sr * 1000} ms"
+            f"Cross delay: max={cross_diff.max() / sr * 1000} ms, min={cross_diff.min() / sr * 1000} ms"
         )
 
     # compute grid correlation
@@ -207,10 +213,10 @@ def smooth_toa(
     ), "more than one maximum correlation at the edge of the window, consider increasing 'max_grid_ms'"
     if verbose:
         print(
-            f"Maximum grid correlation: {left_grid_diff_max_corr.max()}, minimum grid correlation: {left_grid_diff_max_corr.min()}"
+            f"Left grid correlation: max={left_grid_diff_max_corr.max()}, min={left_grid_diff_max_corr.min()}"
         )
         print(
-            f"Maximum grid delay: {left_grid_diff.max() / sr * 1000} ms, minimum grid delay: {left_grid_diff.min() / sr * 1000} ms"
+            f"Left grid delay: max={left_grid_diff.max() / sr * 1000} ms, min={left_grid_diff.min() / sr * 1000} ms"
         )
 
     right_grid_diff, right_grid_diff_max_corr = get_max_cross_correlation_index(
@@ -223,71 +229,73 @@ def smooth_toa(
     ), "more than one maximum correlation at the edge of the window, consider increasing 'max_grid_ms'"
     if verbose:
         print(
-            f"Maximum grid correlation: {right_grid_diff_max_corr.max()}, minimum grid correlation: {right_grid_diff_max_corr.min()}"
+            f"Right grid correlation: max={right_grid_diff_max_corr.max()}, min={right_grid_diff_max_corr.min()}"
         )
         print(
-            f"Maximum grid delay: {right_grid_diff.max() / sr * 1000} ms, minimum grid delay: {right_grid_diff.min() / sr * 1000} ms"
+            f"Right grid delay: max={right_grid_diff.max() / sr * 1000} ms, min={right_grid_diff.min() / sr * 1000} ms"
         )
 
-    if method == "ilp":
-        if ignore_toa:
-            simplices = (
-                simplices
-                + [[x + N for x in simplex] for simplex in simplices]
-                + np.concatenate(
-                    (np.flip(sphere_edges, 1), sphere_edges + N), axis=1
-                ).tolist()
+    if weighted:
+        if weighting_method == "angle":
+            cross_weights = dot2weight(xyz, xyz * np.array([1, -1, 1]))
+            left_grid_weights = dot2weight(
+                xyz[sphere_edges[:, 0]], xyz[sphere_edges[:, 1]]
             )
-            differences = np.concatenate((cross_diff, left_grid_diff, right_grid_diff))
-            edges = np.concatenate(
-                (
-                    np.array([[i, i + N] for i in range(N)]),
-                    sphere_edges,
-                    sphere_edges + N,
-                ),
-                axis=0,
-            )
-            weights = np.concatenate(
-                (cross_diff_max_corr, left_grid_diff_max_corr, right_grid_diff_max_corr)
-            )
-
+            right_grid_weights = left_grid_weights
+            toa_weights = np.full(N * 2, toa_weight)
+        elif weighting_method == "dot":
+            cross_weights = cross_diff_max_corr
+            left_grid_weights = left_grid_diff_max_corr
+            right_grid_weights = right_grid_diff_max_corr
+            toa_weights = naive_toa_max_corr.T.flatten()
         else:
-            simplices = (
-                simplices
-                + [[x + N for x in simplex] for simplex in simplices]
-                + [[-1, u, v] for u, v in sphere_edges]
-                + [[-1, u, v] for u, v in sphere_edges + N]
-                + [[-1, i, i + N] for i in range(N)]
-                + np.concatenate(
-                    (np.flip(sphere_edges, 1), sphere_edges + N), axis=1
-                ).tolist()
-            )
+            raise ValueError(f"Unknown weighting method: {weighting_method}")
+    else:
+        cross_weights = np.ones_like(cross_diff_max_corr)
+        left_grid_weights = np.ones_like(left_grid_diff_max_corr)
+        right_grid_weights = np.ones_like(right_grid_diff_max_corr)
+        toa_weights = np.ones(N * 2)
+
+    edges = np.concatenate(
+        (
+            np.array([[i, i + N] for i in range(N)]),
+            sphere_edges,
+            sphere_edges + N,
+        ),
+        axis=0,
+    )
+    differences = np.concatenate((cross_diff, left_grid_diff, right_grid_diff))
+    simplices = (
+        hull_simplices
+        + [[x + N for x in simplex] for simplex in hull_simplices]
+        + np.concatenate((np.flip(sphere_edges, 1), sphere_edges + N), axis=1).tolist()
+    )
+    weights = np.concatenate((cross_weights, left_grid_weights, right_grid_weights))
+
+    if method == "ilp":
+        if not ignore_toa:
+            simplices.extend([[-1, u, v] for u, v in sphere_edges])
+            simplices.extend([[-1, u, v] for u, v in sphere_edges + N])
+            simplices.extend([[-1, i, i + N] for i in range(N)])
 
             differences = np.concatenate(
                 (
                     naive_toa[:, 0],
                     naive_toa[:, 1],
-                    cross_diff,
-                    left_grid_diff,
-                    right_grid_diff,
+                    differences,
                 )
             )
             edges = np.concatenate(
                 (
                     np.array([[-1, i] for i in range(2 * N)]),
-                    np.array([[i, i + N] for i in range(N)]),
-                    sphere_edges,
-                    sphere_edges + N,
+                    edges,
                 ),
                 axis=0,
             )
             weights = np.concatenate(
                 (
-                    naive_toa_max_corr[:, 0],
-                    naive_toa_max_corr[:, 1],
-                    cross_diff_max_corr,
-                    left_grid_diff_max_corr,
-                    right_grid_diff_max_corr,
+                    toa_weights,
+                    weights,
                 )
             )
 
@@ -313,40 +321,19 @@ def smooth_toa(
         toa = result.reshape((2, N)).T
 
     elif method == "l2":
-        sphere_arccos = (
-            np.arccos(
-                np.sum(xyz[sphere_edges[:, 0]] * xyz[sphere_edges[:, 1]], axis=-1)
-            )
-            / np.pi
-            * 180
-        )
-        tmp = np.sum(xyz**2 * np.array([1, -1, 1]), axis=-1)
-        dot = np.clip(tmp, -1, 1)
-        cross_arcos = np.arccos(dot) / np.pi * 180
-
-        differences = np.concatenate((cross_diff, left_grid_diff, right_grid_diff))
-        edges = np.concatenate(
-            (
-                np.array([[i, i + N] for i in range(N)]),
-                sphere_edges,
-                sphere_edges + N,
-            ),
-            axis=0,
-        )
-
-        arccos = np.concatenate((cross_arcos, sphere_arccos, sphere_arccos))
-        weights = np.exp(-arccos / 8)
         toa = (
             smooth_toa_l2_core(
                 edges,
                 differences,
-                weights if weighted else np.ones_like(weights),
+                weights,
                 naive_toa=None if ignore_toa else naive_toa.T.flatten(),
                 lda=toa_weight,
             )
             .reshape((2, N))
             .T
         )
+    else:
+        raise ValueError(f"Unknown method: {method}")
 
     if ignore_toa:
         toa = toa - toa.mean() + naive_toa.mean()
