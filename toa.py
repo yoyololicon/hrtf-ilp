@@ -4,6 +4,7 @@ from numba import njit, prange
 import numba as nb
 from soxr import resample
 from scipy.spatial import ConvexHull, Delaunay
+from scipy import sparse as sp
 from typing import Tuple, Iterable
 
 from rigid import hrtf_toa
@@ -57,16 +58,76 @@ def get_max_cross_correlation_index(
     return (argmax - tol), max_corr
 
 
+def smooth_toa_l2_core(
+    edges: np.ndarray,
+    differences: np.ndarray,
+    weights: np.ndarray,
+    naive_toa: np.ndarray = None,
+    lda: float = 1.0,
+) -> np.ndarray:
+    assert np.all(edges >= 0), "negative edge index detected"
+    assert np.all(edges[:, 0] < edges[:, 1]), "edge index is not sorted"
+
+    if naive_toa is not None:
+        N = naive_toa.shape[0]
+    else:
+        N = np.max(edges) + 1
+
+    Gamma_triu = sp.csr_matrix(
+        (differences, (edges[:, 0], edges[:, 1])),
+        shape=(N, N),
+    )
+    Gamma = -Gamma_triu + Gamma_triu.T
+
+    W_triu = sp.csr_matrix(
+        (weights, (edges[:, 0], edges[:, 1])),
+        shape=(N, N),
+    )
+    W = W_triu + W_triu.T
+
+    A = sp.diags(W.sum(1).A1) - W
+    if naive_toa is not None:
+        A = A + sp.eye(N) * lda
+        B = (W @ Gamma).diagonal() - naive_toa * lda
+    else:
+        B = (W @ Gamma).diagonal() + lda
+
+        rows, cols, vals = sp.find(A)
+        vals = np.concatenate((vals, np.ones(N)))
+        rows = np.concatenate((rows, np.full(N, N)))
+        cols = np.concatenate((cols, np.arange(N)))
+        A = sp.csr_matrix((vals, (rows, cols)), shape=(N + 1, N))
+        B = np.concatenate((B, np.array([0])), axis=0)
+
+    print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
+
+    toa, *_ = sp.linalg.lsqr(A, -B)
+    return toa
+
+
+def smooth_toa_l2_with_origin_core(
+    edges: np.ndarray,
+    differences: np.ndarray,
+    weights: np.ndarray,
+    naive_toa: np.ndarray,
+) -> np.ndarray:
+    assert np.min(edges) == -1, "no origin detected"
+    edges = edges + 1
+    raise NotImplementedError
+
+
 def smooth_toa(
     hrir: np.ndarray,
     xyz: np.ndarray,
     sr: int,
+    method: str = "ilp",
     stereo_proj: bool = False,
     oversampling: int = 1,
     max_grid_ms: float = 0.05,
     max_cross_ms: float = 1.0,
     ignore_toa: bool = False,
     weighted: bool = False,
+    toa_weight: float = 1.0,
     verbose: bool = True,
 ) -> np.ndarray:
     if oversampling > 1:
@@ -168,23 +229,101 @@ def smooth_toa(
             f"Maximum grid delay: {right_grid_diff.max() / sr * 1000} ms, minimum grid delay: {right_grid_diff.min() / sr * 1000} ms"
         )
 
-    # arccos = (
-    #     np.arccos(np.sum(xyz[unique_edges[:, 0]] * xyz[unique_edges[:, 1]], axis=-1))
-    #     / np.pi
-    #     * 180
-    # )
-    # weights = np.exp(-arccos / 8)
-    # print(f"Minumum weight: {weights.min()}, maximum weight: {weights.max()}")
-    # weights = np.round(weights * 100).astype(int)
+    if method == "ilp":
+        if ignore_toa:
+            simplices = (
+                simplices
+                + [[x + N for x in simplex] for simplex in simplices]
+                + np.concatenate(
+                    (np.flip(sphere_edges, 1), sphere_edges + N), axis=1
+                ).tolist()
+            )
+            differences = np.concatenate((cross_diff, left_grid_diff, right_grid_diff))
+            edges = np.concatenate(
+                (
+                    np.array([[i, i + N] for i in range(N)]),
+                    sphere_edges,
+                    sphere_edges + N,
+                ),
+                axis=0,
+            )
+            weights = np.concatenate(
+                (cross_diff_max_corr, left_grid_diff_max_corr, right_grid_diff_max_corr)
+            )
 
-    if ignore_toa:
-        simplices = (
-            simplices
-            + [[x + N for x in simplex] for simplex in simplices]
-            + np.concatenate(
-                (np.flip(sphere_edges, 1), sphere_edges + N), axis=1
-            ).tolist()
+        else:
+            simplices = (
+                simplices
+                + [[x + N for x in simplex] for simplex in simplices]
+                + [[-1, u, v] for u, v in sphere_edges]
+                + [[-1, u, v] for u, v in sphere_edges + N]
+                + [[-1, i, i + N] for i in range(N)]
+                + np.concatenate(
+                    (np.flip(sphere_edges, 1), sphere_edges + N), axis=1
+                ).tolist()
+            )
+
+            differences = np.concatenate(
+                (
+                    naive_toa[:, 0],
+                    naive_toa[:, 1],
+                    cross_diff,
+                    left_grid_diff,
+                    right_grid_diff,
+                )
+            )
+            edges = np.concatenate(
+                (
+                    np.array([[-1, i] for i in range(2 * N)]),
+                    np.array([[i, i + N] for i in range(N)]),
+                    sphere_edges,
+                    sphere_edges + N,
+                ),
+                axis=0,
+            )
+            weights = np.concatenate(
+                (
+                    naive_toa_max_corr[:, 0],
+                    naive_toa_max_corr[:, 1],
+                    cross_diff_max_corr,
+                    left_grid_diff_max_corr,
+                    right_grid_diff_max_corr,
+                )
+            )
+
+        print(f"Number of simplices: {len(simplices)}")
+        print(f"Number of edges: {len(edges)}")
+
+        k = solve_linprog(
+            edges, simplices, differences, c=weights if weighted else None
         )
+
+        finer_G = nx.DiGraph()
+        for i in range(edges.shape[0]):
+            u, v = edges[i]
+            w = k[i] + differences[i]
+            finer_G.add_edge(u, v, weight=w)
+            finer_G.add_edge(v, u, weight=-w)
+
+        result = np.zeros(N * 2)
+        root = 0 if ignore_toa else -1
+        for u, v in nx.dfs_edges(finer_G, root):
+            result[v] = result[u] + finer_G[u][v]["weight"]
+
+        toa = result.reshape((2, N)).T
+
+    elif method == "l2":
+        sphere_arccos = (
+            np.arccos(
+                np.sum(xyz[sphere_edges[:, 0]] * xyz[sphere_edges[:, 1]], axis=-1)
+            )
+            / np.pi
+            * 180
+        )
+        tmp = np.sum(xyz**2 * np.array([1, -1, 1]), axis=-1)
+        dot = np.clip(tmp, -1, 1)
+        cross_arcos = np.arccos(dot) / np.pi * 180
+
         differences = np.concatenate((cross_diff, left_grid_diff, right_grid_diff))
         edges = np.concatenate(
             (
@@ -194,71 +333,23 @@ def smooth_toa(
             ),
             axis=0,
         )
-        weights = np.concatenate(
-            (cross_diff_max_corr, left_grid_diff_max_corr, right_grid_diff_max_corr)
-        )
 
-    else:
-        simplices = (
-            simplices
-            + [[x + N for x in simplex] for simplex in simplices]
-            + [[-1, u, v] for u, v in sphere_edges]
-            + [[-1, u, v] for u, v in sphere_edges + N]
-            + [[-1, i, i + N] for i in range(N)]
-            + np.concatenate(
-                (np.flip(sphere_edges, 1), sphere_edges + N), axis=1
-            ).tolist()
-        )
-
-        differences = np.concatenate(
-            (
-                naive_toa[:, 0],
-                naive_toa[:, 1],
-                cross_diff,
-                left_grid_diff,
-                right_grid_diff,
+        arccos = np.concatenate((cross_arcos, sphere_arccos, sphere_arccos))
+        weights = np.exp(-arccos / 8)
+        toa = (
+            smooth_toa_l2_core(
+                edges,
+                differences,
+                weights if weighted else np.ones_like(weights),
+                naive_toa=None if ignore_toa else naive_toa.T.flatten(),
+                lda=toa_weight,
             )
+            .reshape((2, N))
+            .T
         )
-        edges = np.concatenate(
-            (
-                np.array([[-1, i] for i in range(2 * N)]),
-                np.array([[i, i + N] for i in range(N)]),
-                sphere_edges,
-                sphere_edges + N,
-            ),
-            axis=0,
-        )
-        weights = np.concatenate(
-            (
-                naive_toa_max_corr[:, 0],
-                naive_toa_max_corr[:, 1],
-                cross_diff_max_corr,
-                left_grid_diff_max_corr,
-                right_grid_diff_max_corr,
-            )
-        )
-
-    print(f"Number of simplices: {len(simplices)}")
-    print(f"Number of edges: {len(edges)}")
-
-    k = solve_linprog(edges, simplices, differences, c=weights if weighted else None)
-
-    finer_G = nx.DiGraph()
-    for i in range(edges.shape[0]):
-        u, v = edges[i]
-        w = k[i] + differences[i]
-        finer_G.add_edge(u, v, weight=w)
-        finer_G.add_edge(v, u, weight=-w)
-
-    result = np.zeros(N * 2)
-    root = 0 if ignore_toa else -1
-    for u, v in nx.dfs_edges(finer_G, root):
-        result[v] = result[u] + finer_G[u][v]["weight"]
-
-    toa = result.reshape((2, N)).T
 
     if ignore_toa:
-        toa = toa - toa.mean(0) + naive_toa.mean(0)
+        toa = toa - toa.mean() + naive_toa.mean()
 
     if oversampling > 1:
         toa /= oversampling
