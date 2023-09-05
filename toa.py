@@ -89,6 +89,7 @@ def smooth_toa_l2_core(
     if naive_toa is not None:
         A = A + sp.eye(N) * lda
         B = (W @ Gamma).diagonal() - naive_toa * lda
+        solver = sp.linalg.spsolve
     else:
         B = (W @ Gamma).diagonal() + lda
 
@@ -99,9 +100,11 @@ def smooth_toa_l2_core(
         A = sp.csr_matrix((vals, (rows, cols)), shape=(N + 1, N))
         B = np.concatenate((B, np.array([0])), axis=0)
 
-    print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
+        solver = lambda A, B: sp.linalg.lsqr(A, B)[0]
 
-    toa, *_ = sp.linalg.lsqr(A, -B)
+    toa = solver(A, -B)
+
+    print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
     return toa
 
 
