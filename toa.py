@@ -6,6 +6,7 @@ from soxr import resample
 from scipy.spatial import ConvexHull, Delaunay
 from scipy import sparse as sp
 from typing import Tuple, Iterable
+import time
 
 from rigid import hrtf_toa
 from graph import stereographic_projection
@@ -86,26 +87,31 @@ def smooth_toa_l2_core(
     W = W_triu + W_triu.T
 
     A = sp.diags(W.sum(1).A1) - W
+    B = (W @ Gamma).diagonal()
     if naive_toa is not None:
         A = A + sp.eye(N) * lda
-        B = (W @ Gamma).diagonal() - naive_toa * lda
-        solver = sp.linalg.spsolve
+        B = B - naive_toa * lda
     else:
-        B = (W @ Gamma).diagonal() + lda
-
         rows, cols, vals = sp.find(A)
-        vals = np.concatenate((vals, np.ones(N)))
-        rows = np.concatenate((rows, np.full(N, N)))
-        cols = np.concatenate((cols, np.arange(N)))
-        A = sp.csr_matrix((vals, (rows, cols)), shape=(N + 1, N))
+        vals = np.concatenate((vals, np.ones(N * 2)))
+        rows = np.concatenate((rows, np.full(N, N), np.arange(N)))
+        cols = np.concatenate((cols, np.arange(N), np.full(N, N)))
+        A = sp.csr_matrix((vals, (rows, cols)), shape=(N + 1, N + 1))
         B = np.concatenate((B, np.array([0])), axis=0)
 
-        solver = lambda A, B: sp.linalg.lsqr(A, B)[0]
+    matrix_shape = A.shape
 
-    toa = solver(A, -B)
+    start_time = time.time()
+    toa = sp.linalg.spsolve(A, -B)
+    elapsed_time = time.time() - start_time
 
     print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
-    return toa
+    print(f"Matrix shape: {matrix_shape}")
+    print(f"Elapsed time: {elapsed_time} s")
+    if naive_toa is None:
+        toa, lambda_ = toa[:-1], toa[-1]
+        print(f"Lambda: {lambda_}")
+    return toa, matrix_shape, elapsed_time
 
 
 def angle2weight(angle: np.ndarray, std: float = 8) -> np.ndarray:
@@ -305,6 +311,7 @@ def smooth_toa(
         print(f"Number of simplices: {len(simplices)}")
         print(f"Number of edges: {len(edges)}")
 
+        start_time = time.time()
         k = solve_linprog(
             edges, simplices, differences, c=weights if weighted else None
         )
@@ -322,19 +329,18 @@ def smooth_toa(
             result[v] = result[u] + finer_G[u][v]["weight"]
 
         toa = result.reshape((2, N)).T
+        t = time.time() - start_time
+        matrix_shape = (len(simplices), len(edges))
 
     elif method == "l2":
-        toa = (
-            smooth_toa_l2_core(
-                edges,
-                differences,
-                weights,
-                naive_toa=None if ignore_toa else naive_toa.T.flatten(),
-                lda=toa_weight,
-            )
-            .reshape((2, N))
-            .T
+        toa, matrix_shape, t = smooth_toa_l2_core(
+            edges,
+            differences,
+            weights,
+            naive_toa=None if ignore_toa else naive_toa.T.flatten(),
+            lda=toa_weight,
         )
+        toa = toa.reshape((2, N)).T
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -344,4 +350,4 @@ def smooth_toa(
     if oversampling > 1:
         toa /= oversampling
 
-    return toa
+    return toa, matrix_shape, t
