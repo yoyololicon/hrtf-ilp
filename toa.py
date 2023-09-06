@@ -64,7 +64,7 @@ def smooth_toa_l2_core(
     differences: np.ndarray,
     weights: np.ndarray,
     naive_toa: np.ndarray = None,
-    lda: float = 1.0,
+    lamb: float = 1.0,
 ) -> np.ndarray:
     assert np.all(edges >= 0), "negative edge index detected"
     assert np.all(edges[:, 0] < edges[:, 1]), "edge index is not sorted"
@@ -89,8 +89,8 @@ def smooth_toa_l2_core(
     A = sp.diags(W.sum(1).A1) - W
     B = (W @ Gamma).diagonal()
     if naive_toa is not None:
-        A = A + sp.eye(N) * lda
-        B = B - naive_toa * lda
+        A = A + sp.eye(N) * lamb
+        B = B - naive_toa * lamb
     else:
         rows, cols, vals = sp.find(A)
         vals = np.concatenate((vals, np.ones(N * 2)))
@@ -338,7 +338,7 @@ def smooth_toa(
             differences,
             weights,
             naive_toa=None if ignore_toa else naive_toa.T.flatten(),
-            lda=toa_weight,
+            lamb=toa_weight,
         )
         toa = toa.reshape((2, N)).T
     else:
