@@ -10,7 +10,7 @@ import time
 
 from rigid import hrtf_toa
 from graph import stereographic_projection
-from linprog import solve_linprog
+from linprog import solve_linprog, solve_quadprog
 from utils import has_hole_at_the_bottom
 
 
@@ -91,26 +91,31 @@ def smooth_toa_l2_core(
     if naive_toa is not None:
         A = A + sp.eye(N) * lamb
         B = B - naive_toa * lamb
+        solver = sp.linalg.spsolve
     else:
+        B = B + lamb
+
         rows, cols, vals = sp.find(A)
-        vals = np.concatenate((vals, np.ones(N * 2)))
-        rows = np.concatenate((rows, np.full(N, N), np.arange(N)))
-        cols = np.concatenate((cols, np.arange(N), np.full(N, N)))
-        A = sp.csr_matrix((vals, (rows, cols)), shape=(N + 1, N + 1))
+        vals = np.concatenate((vals, np.ones(N)))
+        rows = np.concatenate((rows, np.full(N, N)))
+        cols = np.concatenate((cols, np.arange(N)))
+        A = sp.csr_matrix((vals, (rows, cols)), shape=(N + 1, N))
         B = np.concatenate((B, np.array([0])), axis=0)
+
+        solver = lambda A, B: sp.linalg.lsqr(A, B)[0]
 
     matrix_shape = A.shape
 
     start_time = time.time()
-    toa = sp.linalg.spsolve(A, -B)
+    toa = solver(A, -B)
     elapsed_time = time.time() - start_time
 
     print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
     print(f"Matrix shape: {matrix_shape}")
     print(f"Elapsed time: {elapsed_time} s")
-    if naive_toa is None:
-        toa, lambda_ = toa[:-1], toa[-1]
-        print(f"Lambda: {lambda_}")
+    # if naive_toa is None:
+    #     toa, lambda_ = toa[:-1], toa[-1]
+    #     print(f"Lambda: {lambda_}")
     return toa, matrix_shape, elapsed_time
 
 
@@ -137,6 +142,7 @@ def smooth_toa(
     max_grid_ms: float = 0.05,
     max_cross_ms: float = 1.0,
     ignore_toa: bool = False,
+    ignore_cross: bool = False,
     weighted: bool = False,
     weighting_method: str = "angle",
     toa_weight: float = 1.0,
@@ -265,6 +271,23 @@ def smooth_toa(
         right_grid_weights = np.ones_like(right_grid_diff_max_corr)
         toa_weights = np.ones(N * 2)
 
+    if ignore_cross:
+        toa, matrix_shape, t = _lr_separate_toa(
+            sphere_edges,
+            hull_simplices,
+            left_grid_diff,
+            right_grid_diff,
+            left_grid_weights,
+            right_grid_weights,
+            naive_toa=None if ignore_toa else naive_toa,
+            toa_weights=None if ignore_toa else toa_weights,
+            method=method,
+            toa_weight=toa_weight,
+        )
+        if oversampling > 1:
+            toa /= oversampling
+        return toa, matrix_shape, t
+
     edges = np.concatenate(
         (
             np.array([[i, i + N] for i in range(N)]),
@@ -281,7 +304,7 @@ def smooth_toa(
     )
     weights = np.concatenate((cross_weights, left_grid_weights, right_grid_weights))
 
-    if method == "ilp":
+    if method == "ilp" or method == "qlp":
         if not ignore_toa:
             simplices.extend([[-1, u, v] for u, v in sphere_edges])
             simplices.extend([[-1, u, v] for u, v in sphere_edges + N])
@@ -312,9 +335,14 @@ def smooth_toa(
         print(f"Number of edges: {len(edges)}")
 
         start_time = time.time()
-        k = solve_linprog(
-            edges, simplices, differences, c=weights if weighted else None
-        )
+        if method == "qlp":
+            k = solve_quadprog(
+                edges, simplices, differences, c=weights if weighted else None
+            )
+        else:
+            k = solve_linprog(
+                edges, simplices, differences, c=weights if weighted else None
+            )
 
         finer_G = nx.DiGraph()
         for i in range(edges.shape[0]):
@@ -344,10 +372,117 @@ def smooth_toa(
     else:
         raise ValueError(f"Unknown method: {method}")
 
-    if ignore_toa:
-        toa = toa - toa.mean() + naive_toa.mean()
-
     if oversampling > 1:
         toa /= oversampling
+
+    return toa, matrix_shape, t
+
+
+def _lr_separate_toa(
+    sphere_edges,
+    sphere_simplices,
+    left_grid_diff,
+    right_grid_diff,
+    left_grid_weights,
+    right_grid_weights,
+    naive_toa=None,
+    toa_weights=None,
+    method="ilp",
+    toa_weight=0.1,
+):
+    N = np.max(sphere_edges) + 1
+
+    if method == "ilp" or method == "qlp":
+        if naive_toa is not None:
+            edges = np.concatenate(
+                (
+                    np.array([[-1, i] for i in range(N)]),
+                    sphere_edges,
+                ),
+                axis=0,
+            )
+            simplices = sphere_simplices + [[-1, u, v] for u, v in sphere_edges]
+            left_weights = np.concatenate(
+                (
+                    toa_weights[:N],
+                    left_grid_weights,
+                )
+            )
+            left_diff = np.concatenate(
+                (
+                    naive_toa[:, 0],
+                    left_grid_diff,
+                )
+            )
+            right_weights = np.concatenate(
+                (
+                    toa_weights[N:],
+                    right_grid_weights,
+                )
+            )
+            right_diff = np.concatenate(
+                (
+                    naive_toa[:, 1],
+                    right_grid_diff,
+                )
+            )
+        else:
+            edges = sphere_edges
+            simplices = sphere_simplices
+            left_weights = left_grid_weights
+            right_weights = right_grid_weights
+            left_diff = left_grid_diff
+            right_diff = right_grid_diff
+
+        start_time = time.time()
+        if method == "qlp":
+            left_k = solve_quadprog(edges, simplices, left_diff, c=left_weights)
+            right_k = solve_quadprog(edges, simplices, right_diff, c=right_weights)
+        else:
+            left_k = solve_linprog(edges, simplices, left_diff, c=left_weights)
+            right_k = solve_linprog(edges, simplices, right_diff, c=right_weights)
+
+        finer_G_l = nx.DiGraph()
+        finer_G_r = nx.DiGraph()
+        for i in range(edges.shape[0]):
+            u, v = edges[i]
+            left_w = left_k[i] + left_diff[i]
+            right_w = right_k[i] + right_diff[i]
+            finer_G_l.add_edge(u, v, weight=left_w)
+            finer_G_l.add_edge(v, u, weight=-left_w)
+            finer_G_r.add_edge(u, v, weight=right_w)
+            finer_G_r.add_edge(v, u, weight=-right_w)
+
+        result = np.zeros((2, N))
+        root = 0 if naive_toa is None else -1
+        for u, v in nx.dfs_edges(finer_G_l, root):
+            result[0, v] = result[0, u] + finer_G_l[u][v]["weight"]
+            result[1, v] = result[1, u] + finer_G_r[u][v]["weight"]
+
+        toa = result.T
+        t = time.time() - start_time
+        matrix_shape = (len(simplices), len(edges))
+    elif method == "l2":
+        left_toa, matrix_shape, lt = smooth_toa_l2_core(
+            sphere_edges,
+            left_grid_diff,
+            left_grid_weights,
+            naive_toa=None if naive_toa is None else naive_toa[:, 0],
+            lamb=toa_weight,
+        )
+        right_toa, matrix_shape, rt = smooth_toa_l2_core(
+            sphere_edges,
+            right_grid_diff,
+            right_grid_weights,
+            naive_toa=None if naive_toa is None else naive_toa[:, 1],
+            lamb=toa_weight,
+        )
+        t = lt + rt
+        toa = np.stack((left_toa, right_toa), axis=1)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    if naive_toa is None:
+        toa = toa - toa.mean(0)
 
     return toa, matrix_shape, t
