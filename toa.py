@@ -139,8 +139,6 @@ def smooth_toa(
     method: str = "ilp",
     stereo_proj: bool = False,
     oversampling: int = 1,
-    max_grid_ms: float = 0.05,
-    max_cross_ms: float = 1.0,
     ignore_toa: bool = False,
     ignore_cross: bool = False,
     weighted: bool = False,
@@ -185,6 +183,10 @@ def smooth_toa(
 
     sphere_edges = simplices2edges(hull_simplices)
 
+    assert (
+        np.max(sphere_edges) == N - 1
+    ), f"expected {N - 1}, got {np.max(sphere_edges)}"
+
     if verbose:
         print(f"Number of sphere simplices: {len(hull_simplices)}")
         print(f"Number of sphere edges: {len(sphere_edges)}")
@@ -198,16 +200,13 @@ def smooth_toa(
             f"TOA delay: max={naive_toa.max(0) / sr * 1000} ms, min={naive_toa.min(0) / sr * 1000} ms"
         )
 
-    # compute cross correlation
-    max_cross_samples = int(max_cross_ms * sr / 1000)
-    cross_diff, cross_diff_max_corr = get_max_cross_correlation_index(
-        hrir[:, 0],
-        hrir[:, 1],
-        tol=max_cross_samples,
+    hrtf = np.fft.rfft(hrir, n=T * 2, axis=-1)
+    cross_corr = np.fft.irfft(hrtf[:, 1] * hrtf[:, 0].conj(), axis=-1)
+    cross_diff, cross_diff_max_corr = np.argmax(cross_corr, axis=-1), cross_corr.max(
+        axis=-1
     )
-    assert (
-        np.count_nonzero(np.abs(cross_diff) == max_cross_samples) < 2
-    ), "more than one maximum correlation at the edge of the window, consider increasing 'max_cross_ms'"
+    cross_diff = (cross_diff + T) % (2 * T) - T
+
     if verbose:
         print(
             f"Cross correlation: max={cross_diff_max_corr.max()}, min={cross_diff_max_corr.min()}"
@@ -217,15 +216,14 @@ def smooth_toa(
         )
 
     # compute grid correlation
-    max_grid_samples = int(max_grid_ms * sr / 1000)
-    left_grid_diff, left_grid_diff_max_corr = get_max_cross_correlation_index(
-        hrir[:, 0][sphere_edges[:, 0]],
-        hrir[:, 0][sphere_edges[:, 1]],
-        tol=max_grid_samples,
+    left_corr = np.fft.irfft(
+        hrtf[sphere_edges[:, 1], 0] * hrtf.conj()[sphere_edges[:, 0], 0], axis=-1
     )
-    assert (
-        np.count_nonzero(np.abs(left_grid_diff) == max_grid_samples) < 2
-    ), "more than one maximum correlation at the edge of the window, consider increasing 'max_grid_ms'"
+    left_grid_diff, left_grid_diff_max_corr = np.argmax(
+        left_corr, axis=-1
+    ), left_corr.max(axis=-1)
+    left_grid_diff = (left_grid_diff + T) % (2 * T) - T
+
     if verbose:
         print(
             f"Left grid correlation: max={left_grid_diff_max_corr.max()}, min={left_grid_diff_max_corr.min()}"
@@ -234,14 +232,14 @@ def smooth_toa(
             f"Left grid delay: max={left_grid_diff.max() / sr * 1000} ms, min={left_grid_diff.min() / sr * 1000} ms"
         )
 
-    right_grid_diff, right_grid_diff_max_corr = get_max_cross_correlation_index(
-        hrir[:, 1][sphere_edges[:, 0]],
-        hrir[:, 1][sphere_edges[:, 1]],
-        tol=max_grid_samples,
+    right_corr = np.fft.irfft(
+        hrtf[sphere_edges[:, 1], 1] * hrtf.conj()[sphere_edges[:, 0], 1], axis=-1
     )
-    assert (
-        np.count_nonzero(np.abs(right_grid_diff) == max_grid_samples) < 2
-    ), "more than one maximum correlation at the edge of the window, consider increasing 'max_grid_ms'"
+    right_grid_diff, right_grid_diff_max_corr = np.argmax(
+        right_corr, axis=-1
+    ), right_corr.max(axis=-1)
+    right_grid_diff = (right_grid_diff + T) % (2 * T) - T
+
     if verbose:
         print(
             f"Right grid correlation: max={right_grid_diff_max_corr.max()}, min={right_grid_diff_max_corr.min()}"
