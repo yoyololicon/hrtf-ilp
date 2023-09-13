@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import linprog
-from scipy.sparse import csr_matrix, eye, diags
+from scipy.sparse import csr_matrix, eye, diags, find
 from typing import Tuple, Iterable
 from qpsolvers import solve_qp
 
@@ -10,6 +10,8 @@ def solve_linprog(
     simplices: Iterable[Iterable[int]],
     differences: np.ndarray,
     c: np.ndarray = None,
+    fixed_k_mask: np.ndarray = None,
+    adaptive_weights: bool = False,
     **options,
 ) -> np.ndarray:
     """
@@ -45,10 +47,38 @@ def solve_linprog(
 
     V = csr_matrix((vals, (rows, cols)), shape=(N, M))
     y = V @ differences
+
+    if fixed_k_mask is not None:
+        nonzero_cols = np.nonzero(~fixed_k_mask)[0]
+        unique_cols_dict = {x: i for i, x in enumerate(nonzero_cols)}
+        filtered_rows = []
+        filtered_cols = []
+        filtered_vals = []
+        for i, (row, col, val) in enumerate(zip(rows, cols, vals)):
+            if col in unique_cols_dict:
+                filtered_rows.append(row)
+                filtered_cols.append(unique_cols_dict[col])
+                filtered_vals.append(val)
+
+        unique_rows, rows_inv = np.unique(filtered_rows, return_inverse=True)
+        rows = np.arange(len(unique_rows))[rows_inv]
+        y = y[unique_rows]
+        cols = np.array(filtered_cols)
+        vals = np.array(filtered_vals)
+
+        V = csr_matrix(
+            (vals, (rows, cols)),
+            shape=(len(unique_rows), len(nonzero_cols)),
+        )
+
+        N, M = V.shape
+        if c is not None:
+            c = c[~fixed_k_mask]
+
     y = np.round(y).astype(np.int64)
 
-    print("Number of non-zero simplices:", np.count_nonzero(y))
-    print("L1 norm of non-zero simplices:", np.abs(y).sum())
+    # print("Number of non-zero simplices:", np.count_nonzero(y))
+    # print("L1 norm of non-zero simplices:", np.abs(y).sum())
 
     A_eq = csr_matrix(
         (
@@ -60,7 +90,11 @@ def solve_linprog(
     b_eq = -y
 
     if c is None:
-        c = np.ones((M * 2,), dtype=np.int64)
+        if adaptive_weights:
+            c = np.abs(A_eq).T @ np.abs(b_eq)
+            c = np.where(c == 0, 1, 0).astype(np.int64)
+        else:
+            c = np.ones((M * 2,), dtype=np.int64)
     else:
         c = np.tile(c, 2)
 
