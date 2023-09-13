@@ -3,9 +3,15 @@ from tqdm import tqdm
 import maxflow
 import sound_field_analysis as sfa
 import argparse
+from typing import Iterable
+import math
+from scipy.sparse import csr_matrix
+from scipy.spatial import ConvexHull, Delaunay
+import networkx as nx
 
 from graph import *
 from rigid import *
+from linprog import solve_linprog
 
 
 def phase2delay(phase, freqs, sr):
@@ -107,6 +113,7 @@ def unwrap(
     stereo_proj: bool = False,
     p: float = 1.0,
     verbose: bool = True,
+    num_chunks: int = 1,
 ) -> dict:
     N, _, n_fft = hrir.shape
 
@@ -117,7 +124,7 @@ def unwrap(
     save_dict = {}
 
     if equalize:
-        toa = hrtf_toa(hrir)
+        toa = hrtf_toa(hrir)[0]
         params = get_rigid_params(toa, xyz, sr, verbose=verbose)
         save_dict.update(params)
         smoothed_toa = toa_model(xyz, sr=sr, **params)
@@ -129,7 +136,7 @@ def unwrap(
     if method == "naive":
         unwrapped_phase = np.unwrap(phase, axis=2)
     elif method == "maxflow":
-        G = plus_freq_dim(points2graph(xyz, stereo_proj), freqs.size - 1)
+        G = plus_freq_dim(points2graph(xyz, stereo_proj)[0], freqs.size - 1)
         edges = np.array(G.edges)
         if verbose:
             print(f"Number of edges: {edges.shape[0]}")
@@ -141,7 +148,7 @@ def unwrap(
             axis=1,
         )
     elif method == "sphere":
-        G = points2graph(xyz, stereo_proj)
+        G = points2graph(xyz, stereo_proj)[0]
         edges = np.array(G.edges)
         if verbose:
             print(f"Number of edges: {edges.shape[0]}")
@@ -151,6 +158,18 @@ def unwrap(
                 unwrapped = puma(phase[:, i, j], edges, p=p, verbose=verbose)
                 offset = np.median(unwrapped_phase[:, i, j] - unwrapped)
                 unwrapped_phase[:, i, j] = unwrapped + offset
+    elif method == "ilp":
+        G, simplices = points2graph(xyz, stereo_proj)
+        edges = np.array(G.edges)
+        if verbose:
+            print(f"Number of edges: {edges.shape[0]}")
+        unwrapped_phase_l = ilp_unwrap(
+            phase[:, 0], edges, simplices, num_chunks, verbose
+        )
+        unwrapped_phase_r = ilp_unwrap(
+            phase[:, 1], edges, simplices, num_chunks, verbose
+        )
+        unwrapped_phase = np.stack((unwrapped_phase_l, unwrapped_phase_r), axis=1)
     else:
         raise ValueError(f"Unknown method {method}")
 
@@ -172,6 +191,101 @@ def unwrap(
     save_dict["phase_delay"] = phase_delay
 
     return save_dict
+
+
+def ilp_unwrap(
+    wrapped_phase: np.ndarray,
+    sphere_edges: np.ndarray,
+    sphere_simplices: Iterable[Iterable[int]],
+    num_chunks: int = 1,
+    verbose: bool = True,
+) -> np.ndarray:
+    N, F = wrapped_phase.shape
+    chunks = [len(x) for x in np.array_split(np.arange(F), num_chunks)]
+
+    unwrapped_phase = np.copy(wrapped_phase)
+    fixed_bin_index = -1
+    fixed_k = None
+    for chunk in tqdm(chunks, disable=not verbose):
+        if fixed_k is not None:
+            chunk_length = chunk + 1
+        else:
+            chunk_length = chunk
+
+        index = np.arange(chunk_length) * N + np.arange(N)[:, None]
+        freq_edges = np.stack((index[:, :-1], index[:, 1:]), axis=2).reshape(-1, 2)
+        phase_edges = np.concatenate(
+            [freq_edges] + [sphere_edges + i * N for i in range(chunk_length)], axis=0
+        )
+
+        phase_simplices = [simplex for simplex in sphere_simplices]
+        for i in range(1, chunk_length):
+            phase_simplices += [
+                [x + i * N for x in simplex] for simplex in sphere_simplices
+            ]
+        phase_simplices.extend(
+            sum(
+                (
+                    np.concatenate(
+                        (
+                            np.flip(sphere_edges + i * N, 1),
+                            sphere_edges + (i + 1) * N,
+                        ),
+                        axis=1,
+                    ).tolist()
+                    for i in range(chunk_length - 1)
+                ),
+                [],
+            )
+        )
+
+        psi = unwrapped_phase[
+            :, max(0, fixed_bin_index) : fixed_bin_index + chunk + 1
+        ].T.reshape(-1)
+        phase_diff = wrap(psi[phase_edges[:, 1]] - psi[phase_edges[:, 0]]) / (2 * np.pi)
+
+        if fixed_k is not None:
+            fixed_k_mask = np.all(phase_edges < N, 1)
+            phase_diff[fixed_k_mask] += fixed_k
+            new_k = solve_linprog(
+                phase_edges,
+                phase_simplices,
+                phase_diff,
+                fixed_k_mask=fixed_k_mask,
+                adaptive_weights=False,
+            )
+            k = np.zeros(phase_edges.shape[0], dtype=np.int64)
+            k[fixed_k_mask] = fixed_k
+            k[~fixed_k_mask] = new_k
+        else:
+            k = solve_linprog(
+                phase_edges, phase_simplices, phase_diff, adaptive_weights=False
+            )
+        fixed_k = k[np.all(phase_edges >= N * (chunk_length - 1), 1)]
+
+        finer_G = nx.DiGraph()
+        for i in range(phase_edges.shape[0]):
+            u, v = phase_edges[i]
+            if u < N and v < N:
+                weight = phase_diff[i]
+            else:
+                weight = k[i] + phase_diff[i]
+            finer_G.add_edge(u, v, weight=weight)
+            finer_G.add_edge(v, u, weight=-weight)
+
+        result = psi.copy()
+        for u, v in nx.dfs_edges(finer_G, 0):
+            if v >= N:
+                result[v] = result[u] + finer_G[u][v]["weight"] * 2 * np.pi
+
+        result = result.reshape(chunk_length, N).T
+        unwrapped_phase[
+            :, max(fixed_bin_index, 0) : fixed_bin_index + chunk + 1
+        ] = result
+
+        fixed_bin_index += chunk
+
+    return unwrapped_phase
 
 
 def main():
