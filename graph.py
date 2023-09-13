@@ -72,7 +72,30 @@ def points2graph(points: np.ndarray, stereo_proj: bool = False):
     G = nx.Graph()
     G.add_edges_from(edges)
     G = G.to_undirected()
-    return G
+
+    hull_simplices = hull.simplices
+
+    # add the simplice at the bottom, which is represented as -1 in the neighbor simplices
+    mask = hull.neighbors == -1
+    if np.any(mask):
+        simplex_edges = np.stack(
+            (hull_simplices, np.roll(hull_simplices, -1, 1)), axis=2
+        )[np.roll(mask, 1, 1)]
+        simplex_G = nx.Graph(simplex_edges.tolist())
+        cycles = nx.cycle_basis(simplex_G)
+        assert len(cycles) == 1, "more than one cycle detected"
+        bottom_simplex = cycles[0]
+        assert len(bottom_simplex) == len(
+            simplex_G.nodes
+        ), "bottom simplex is not complete"
+        print("Size of the bottom simplex:", len(bottom_simplex))
+
+        hull_simplices = hull_simplices.tolist()
+        hull_simplices.append(bottom_simplex)
+    else:
+        hull_simplices = hull_simplices.tolist()
+
+    return G, hull_simplices
 
 
 def plus_freq_dim(G: nx.Graph, f: int):
