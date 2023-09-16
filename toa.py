@@ -354,6 +354,9 @@ def smooth_toa(
     else:
         raise ValueError(f"Unknown method: {method}")
 
+    if ignore_toa:
+        toa = toa - toa.mean()
+
     if oversampling > 1:
         toa = toa / oversampling
 
