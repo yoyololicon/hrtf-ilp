@@ -1,7 +1,5 @@
 import networkx as nx
 import numpy as np
-from numba import njit, prange
-import numba as nb
 from soxr import resample
 from scipy.spatial import ConvexHull, Delaunay
 from scipy import sparse as sp
@@ -10,7 +8,7 @@ import time
 
 from rigid import hrtf_toa
 from graph import stereographic_projection
-from linprog import solve_linprog, solve_quadprog
+from linprog import solve_linprog, solve_quadprog, solve_linprog_ez
 from utils import has_hole_at_the_bottom
 
 
@@ -23,40 +21,6 @@ def simplices2edges(simplices: Iterable[Iterable[int]]) -> np.ndarray:
             edges.add(e)
             u = v
     return np.array(list(edges))
-
-
-@njit(
-    nb.types.Tuple((nb.int64[:], nb.float64[:]))(
-        nb.float64[:, :], nb.float64[:, :], nb.int64
-    ),
-    parallel=True,
-)
-def get_max_cross_correlation_index(
-    hrir_s: np.ndarray, hrir_t: np.ndarray, tol: int = None
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Args:
-        hrir_s: (N, T)
-        hrir_t: (N, T)
-        tol: int
-    """
-    N, T = hrir_s.shape
-    if tol is None:
-        tol = T // 2
-
-    corr = np.zeros((N, 2 * tol + 1))
-    for i in prange(2 * tol + 1):
-        for j in prange(N):
-            x = hrir_s[j, max(0, tol - i) : min(T, tol - i + T)]
-            y = hrir_t[j, max(0, i - tol) : min(T, i - tol + T)]
-            corr[j, i] = x @ y
-
-    argmax = np.empty(N, dtype=np.int64)
-    max_corr = np.empty(N, dtype=np.float64)
-    for i in prange(N):
-        argmax[i] = np.argmax(corr[i])
-        max_corr[i] = corr[i, argmax[i]]
-    return (argmax - tol), max_corr
 
 
 def smooth_toa_l2_core(
@@ -110,9 +74,9 @@ def smooth_toa_l2_core(
     toa = solver(A, -B)
     elapsed_time = time.time() - start_time
 
-    print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
-    print(f"Matrix shape: {matrix_shape}")
-    print(f"Elapsed time: {elapsed_time} s")
+    # print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
+    # print(f"Matrix shape: {matrix_shape}")
+    # print(f"Elapsed time: {elapsed_time} s")
     # if naive_toa is None:
     #     toa, lambda_ = toa[:-1], toa[-1]
     #     print(f"Lambda: {lambda_}")
@@ -173,7 +137,8 @@ def smooth_toa(
         assert len(cycles) == 1, "more than one cycle detected"
         bottom_simplex = cycles[0]
         assert len(bottom_simplex) == len(G.nodes), "bottom simplex is not complete"
-        print("Size of the bottom simplex:", len(bottom_simplex))
+        if verbose:
+            print("Size of the bottom simplex:", len(bottom_simplex))
 
         hull_simplices = hull_simplices.tolist()
         hull_simplices.append(bottom_simplex)
@@ -283,7 +248,7 @@ def smooth_toa(
             toa_weight=toa_weight,
         )
         if oversampling > 1:
-            toa /= oversampling
+            toa = toa / oversampling
         return toa, matrix_shape, t
 
     edges = np.concatenate(
@@ -329,8 +294,9 @@ def smooth_toa(
                 )
             )
 
-        print(f"Number of simplices: {len(simplices)}")
-        print(f"Number of edges: {len(edges)}")
+        if verbose:
+            print(f"Number of simplices: {len(simplices)}")
+            print(f"Number of edges: {len(edges)}")
 
         start_time = time.time()
         if method == "qlp":
@@ -357,6 +323,24 @@ def smooth_toa(
         toa = result.reshape((2, N)).T
         t = time.time() - start_time
         matrix_shape = (len(simplices), len(edges))
+    elif method == "edgelist":
+        start_time = time.time()
+
+        m = solve_linprog_ez(
+            edges,
+            differences,
+            weights=weights if weighted else None,
+            toa=naive_toa.T.flatten() if not ignore_toa else None,
+            toa_weights=toa_weights if not ignore_toa else None,
+        )
+
+        toa = m.reshape((2, N)).T
+        t = time.time() - start_time
+        matrix_shape = (
+            (len(edges), len(edges) + N * 2)
+            if ignore_toa
+            else (len(edges) + N * 2, len(edges) + N * 4)
+        )
 
     elif method == "l2":
         toa, matrix_shape, t = smooth_toa_l2_core(
@@ -371,7 +355,7 @@ def smooth_toa(
         raise ValueError(f"Unknown method: {method}")
 
     if oversampling > 1:
-        toa /= oversampling
+        toa = toa / oversampling
 
     return toa, matrix_shape, t
 
@@ -460,6 +444,33 @@ def _lr_separate_toa(
         toa = result.T
         t = time.time() - start_time
         matrix_shape = (len(simplices), len(edges))
+
+    elif method == "edgelist":
+        start_time = time.time()
+
+        left_m = solve_linprog_ez(
+            sphere_edges,
+            left_grid_diff,
+            weights=left_grid_weights,
+            toa=naive_toa[:, 0] if naive_toa is not None else None,
+            toa_weights=toa_weights[:N] if toa_weights is not None else None,
+        )
+        right_m = solve_linprog_ez(
+            sphere_edges,
+            right_grid_diff,
+            weights=right_grid_weights,
+            toa=naive_toa[:, 1] if naive_toa is not None else None,
+            toa_weights=toa_weights[N:] if toa_weights is not None else None,
+        )
+
+        toa = np.stack((left_m, right_m), axis=1)
+        t = time.time() - start_time
+        matrix_shape = (
+            (len(sphere_edges), len(sphere_edges) + N)
+            if naive_toa is None
+            else (len(sphere_edges) + N, len(sphere_edges) + N * 2)
+        )
+
     elif method == "l2":
         left_toa, matrix_shape, lt = smooth_toa_l2_core(
             sphere_edges,

@@ -5,6 +5,63 @@ from typing import Tuple, Iterable
 from qpsolvers import solve_qp
 
 
+def solve_linprog_ez(
+    edges: np.ndarray,
+    differences: np.ndarray,
+    toa: np.ndarray = None,
+    weights: np.ndarray = None,
+    toa_weights: np.ndarray = None,
+) -> np.ndarray:
+    assert differences.dtype == np.int64, "differences must be int"
+    M = edges.shape[0]
+    N = np.max(edges) + 1
+
+    vals = np.concatenate(
+        (np.ones((M,), dtype=np.int64), -np.ones((M,), dtype=np.int64))
+    )
+    rows = np.tile(np.arange(M), 2)
+    cols = np.concatenate((edges[:, 1], edges[:, 0]))
+
+    if weights is None:
+        weights = np.ones((M,), dtype=np.int64)
+
+    if toa is not None:
+        vals = np.concatenate((vals, np.ones(N, dtype=np.int64)))
+        rows = np.concatenate((rows, np.arange(M, M + N)))
+        cols = np.concatenate((cols, np.arange(N)))
+        targets = np.concatenate((differences, toa))
+
+        if toa_weights is None:
+            weights = np.concatenate((weights, np.ones(N, dtype=np.int64)))
+        else:
+            weights = np.concatenate((weights, toa_weights))
+    else:
+        targets = differences
+
+    num_k = M + N if toa is not None else M
+
+    A_eq = csr_matrix(
+        (
+            np.concatenate((vals, np.ones(num_k), -np.ones(num_k))).astype(np.int64),
+            (
+                np.concatenate((rows, np.tile(np.arange(num_k), 2))),
+                np.concatenate((cols, np.arange(2 * num_k) + N)),
+            ),
+        ),
+        shape=(num_k, N + 2 * num_k),
+    )
+
+    c = np.concatenate((np.zeros((N,), dtype=np.int64), weights, weights))
+
+    b_eq = targets
+
+    res = linprog(c, A_eq=A_eq, b_eq=b_eq, integrality=1)
+    if res.x is None:
+        return None
+    m = res.x[:N]
+    return m.astype(np.int64)
+
+
 def solve_linprog(
     edges: np.ndarray,
     simplices: Iterable[Iterable[int]],
