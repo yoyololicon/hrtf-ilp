@@ -245,7 +245,7 @@ def smooth_toa(
             naive_toa=None if ignore_toa else naive_toa,
             toa_weights=None if ignore_toa else toa_weights,
             method=method,
-            toa_weight=toa_weight,
+            lamb=toa_weight,
         )
         if oversampling > 1:
             toa = toa / oversampling
@@ -373,7 +373,7 @@ def _lr_separate_toa(
     naive_toa=None,
     toa_weights=None,
     method="ilp",
-    toa_weight=0.1,
+    lamb=0.1,
 ):
     N = np.max(sphere_edges) + 1
 
@@ -480,14 +480,14 @@ def _lr_separate_toa(
             left_grid_diff,
             left_grid_weights,
             naive_toa=None if naive_toa is None else naive_toa[:, 0],
-            lamb=toa_weight,
+            lamb=lamb,
         )
         right_toa, matrix_shape, rt = smooth_toa_l2_core(
             sphere_edges,
             right_grid_diff,
             right_grid_weights,
             naive_toa=None if naive_toa is None else naive_toa[:, 1],
-            lamb=toa_weight,
+            lamb=lamb,
         )
         t = lt + rt
         toa = np.stack((left_toa, right_toa), axis=1)
