@@ -148,9 +148,8 @@ def smooth_toa(
 
     sphere_edges = simplices2edges(hull_simplices)
 
-    assert (
-        np.max(sphere_edges) == N - 1
-    ), f"expected {N - 1}, got {np.max(sphere_edges)}"
+    num_unique_nodes = len(np.unique(sphere_edges.ravel()))
+    assert num_unique_nodes == N, f"expected {N} nodes, but got {num_unique_nodes}"
 
     if verbose:
         print(f"Number of sphere simplices: {len(hull_simplices)}")
