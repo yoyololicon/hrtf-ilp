@@ -124,7 +124,7 @@ def smooth_toa(
     stereo_proj |= has_hole_at_the_bottom(xyz=xyz)
 
     if stereo_proj:
-        hull = Delaunay(stereographic_projection(-xyz))
+        hull = Delaunay(stereographic_projection(-xyz), qhull_options="QJ")
         hull_simplices = hull.simplices
 
         # add the simplice at the bottom, which is represented as -1 in the neighbor simplices
