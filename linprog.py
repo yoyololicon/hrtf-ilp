@@ -157,7 +157,7 @@ def solve_linprog(
 
     res = linprog(c, A_eq=A_eq, b_eq=b_eq, integrality=1, options=options)
     k = res.x[:M] - res.x[M:]
-    k = k.astype(np.int64)
+    k = np.round(k).astype(np.int64)
     cost = np.abs(V @ k + y).sum()
     assert cost == 0, f"cost is {cost}"
     return k
