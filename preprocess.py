@@ -37,7 +37,7 @@ def main():
         npz_filename = f"{method}_toa_{not ignore_toa}_cross_{not ignore_cross}_{weighting_method}.npz"
 
         try:
-            toa, m_shape, elapsed_time = smooth_toa(
+            toa, m_shape, elapsed_time, num_edges, num_nodes = smooth_toa(
                 hrir=hrir_signal,
                 xyz=hrir_xyz,
                 sr=sr,
@@ -58,6 +58,8 @@ def main():
                 toa=toa,
                 m_shape=m_shape,
                 elapsed_time=elapsed_time,
+                num_edges=num_edges,
+                num_nodes=num_nodes,
             )
 
     yaml.safe_dump(vars(args), open(out_dir / "args.yaml", "w"))

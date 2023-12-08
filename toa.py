@@ -233,8 +233,10 @@ def smooth_toa(
         right_grid_weights = np.ones_like(right_grid_diff_max_corr)
         toa_weights = np.ones(N * 2)
 
+    num_nodes = 2 * N + (0 if ignore_toa else 1)
+
     if ignore_cross:
-        toa, matrix_shape, t = _lr_separate_toa(
+        toa, *_ = _lr_separate_toa(
             sphere_edges,
             hull_simplices,
             left_grid_diff,
@@ -248,7 +250,9 @@ def smooth_toa(
         )
         if oversampling > 1:
             toa = toa / oversampling
-        return toa, matrix_shape, t
+
+        num_edges = (sphere_edges.shape[0] + (0 if naive_toa is None else N)) * 2
+        return [toa] + _ + [num_edges, num_nodes]
 
     edges = np.concatenate(
         (
@@ -322,6 +326,8 @@ def smooth_toa(
         toa = result.reshape((2, N)).T
         t = time.time() - start_time
         matrix_shape = (len(simplices), len(edges))
+        num_edges = len(edges)
+
     elif method == "edgelist":
         start_time = time.time()
 
@@ -340,6 +346,7 @@ def smooth_toa(
             if ignore_toa
             else (len(edges) + N * 2, len(edges) + N * 4)
         )
+        num_edges = len(edges) + (0 if ignore_toa else N * 2)
 
     elif method == "l2":
         toa, matrix_shape, t = smooth_toa_l2_core(
@@ -350,6 +357,7 @@ def smooth_toa(
             lamb=toa_weight,
         )
         toa = toa.reshape((2, N)).T
+        num_edges = len(edges) + (0 if ignore_toa else N * 2)
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -359,7 +367,7 @@ def smooth_toa(
     if oversampling > 1:
         toa = toa / oversampling
 
-    return toa, matrix_shape, t
+    return toa, matrix_shape, t, num_edges, num_nodes
 
 
 def _lr_separate_toa(
