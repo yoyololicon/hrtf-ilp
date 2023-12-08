@@ -59,7 +59,7 @@ def solve_linprog_ez(
     if res.x is None:
         return None
     m = res.x[:N]
-    return m.astype(np.int64)
+    return np.round(m).astype(np.int64)
 
 
 def solve_linprog(
