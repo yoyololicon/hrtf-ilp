@@ -11,12 +11,19 @@ from tqdm import tqdm
 from toa import smooth_toa
 
 
+def calculate_noise_scaler(signal_power, snr, inherent_snr):
+    y = 10 ** (inherent_snr / 10)
+    x = 10 ** (snr / 10)
+    return np.sqrt(signal_power / (y + 1) * (y - x) / x)
+
+
 def main():
     parser = argparse.ArgumentParser("Calculate time of arrival from HRTF")
     parser.add_argument("input", help="Input sofa file")
     parser.add_argument("out_dir", help="Output directory")
     parser.add_argument("--toa-weight", type=float, default=0.1)
     parser.add_argument("--oversampling", type=int, default=10)
+    parser.add_argument("--snr", type=float, default=None)
 
     args = parser.parse_args()
 
@@ -27,6 +34,27 @@ def main():
     radius = hrir.grid.radius
     hrir_signal = np.stack((hrir.l.signal, hrir.r.signal), axis=1)
     hrir_xyz = sfa.utils.sph2cart((az, col, radius)).T
+
+    if args.snr is not None:
+        # find closest point to the frontal direction
+        idx = np.argmin(
+            np.abs(hrir_xyz / radius[:, None] - np.array([1, 0, 0])).sum(axis=-1)
+        )
+        ref_hrirs = hrir_signal[idx]
+
+        power = ref_hrirs**2
+        filtered_power = power[power > 0]
+        # use the top 10% of the power as signal, and the last 10% as noise
+        sorted_power = np.sort(filtered_power)
+        n = sorted_power.shape[0]
+        signal_power = np.mean(sorted_power[-int(n * 0.1) :])
+        noise_power = np.mean(sorted_power[: int(n * 0.1)])
+        inherent_snr = 10 * np.log10(signal_power / noise_power)
+        print(f"Measured SNR: {inherent_snr} dB")
+
+        noise_scaler = calculate_noise_scaler(signal_power, args.snr, inherent_snr)
+        print(noise_scaler)
+        hrir_signal = hrir_signal + np.random.randn(*hrir_signal.shape) * noise_scaler
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
