@@ -11,10 +11,9 @@ from tqdm import tqdm
 from toa import smooth_toa
 
 
-def calculate_noise_scaler(signal_power, snr, inherent_snr):
-    y = 10 ** (inherent_snr / 10)
-    x = 10 ** (snr / 10)
-    return np.sqrt(signal_power / (y + 1) * (y - x) / x)
+def calculate_noise_scaler(signal_power, noise_power, target_snr):
+    target_noise_power = signal_power / (10 ** (target_snr / 10))
+    return np.sqrt(np.maximum(0, target_noise_power - noise_power))
 
 
 def main():
@@ -52,7 +51,7 @@ def main():
         inherent_snr = 10 * np.log10(signal_power / noise_power)
         print(f"Measured SNR: {inherent_snr} dB")
 
-        noise_scaler = calculate_noise_scaler(signal_power, args.snr, inherent_snr)
+        noise_scaler = calculate_noise_scaler(signal_power, noise_power, args.snr)
         print(noise_scaler)
         hrir_signal = hrir_signal + np.random.randn(*hrir_signal.shape) * noise_scaler
 
