@@ -63,31 +63,28 @@ def main():
     ):
         npz_filename = f"{method}_toa_{not ignore_toa}_cross_{not ignore_cross}_{weighting_method}.npz"
 
-        try:
-            toa, m_shape, elapsed_time, num_edges, num_nodes = smooth_toa(
-                hrir=hrir_signal,
-                xyz=hrir_xyz,
-                sr=sr,
-                method=method,
-                oversampling=args.oversampling,
-                ignore_cross=ignore_cross,
-                ignore_toa=ignore_toa,
-                weighted=weighting_method != "none",
-                weighting_method=weighting_method,
-                toa_weight=args.toa_weight,
-                verbose=False,
-            )
-        except Exception as e:
-            print(e, method, ignore_toa, ignore_cross, weighting_method)
-        else:
-            np.savez(
-                out_dir / npz_filename,
-                toa=toa,
-                m_shape=m_shape,
-                elapsed_time=elapsed_time,
-                num_edges=num_edges,
-                num_nodes=num_nodes,
-            )
+        toa, m_shape, elapsed_time, num_edges, num_nodes = smooth_toa(
+            hrir=hrir_signal,
+            xyz=hrir_xyz,
+            sr=sr,
+            method=method,
+            oversampling=args.oversampling,
+            ignore_cross=ignore_cross,
+            ignore_toa=ignore_toa,
+            weighted=weighting_method != "none",
+            weighting_method=weighting_method,
+            toa_weight=args.toa_weight,
+            verbose=False,
+        )
+
+        np.savez(
+            out_dir / npz_filename,
+            toa=toa,
+            m_shape=m_shape,
+            elapsed_time=elapsed_time,
+            num_edges=num_edges,
+            num_nodes=num_nodes,
+        )
 
     yaml.safe_dump(vars(args), open(out_dir / "args.yaml", "w"))
 
