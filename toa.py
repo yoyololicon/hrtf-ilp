@@ -28,6 +28,7 @@ def smooth_toa_l2_core(
     differences: np.ndarray,
     weights: np.ndarray,
     naive_toa: np.ndarray = None,
+    toa_weights: np.ndarray = None,
     lamb: float = 1.0,
 ) -> np.ndarray:
     assert np.all(edges >= 0), "negative edge index detected"
@@ -53,8 +54,8 @@ def smooth_toa_l2_core(
     A = sp.diags(W.sum(1).A1) - W
     B = (W @ Gamma).diagonal()
     if naive_toa is not None:
-        A = A + sp.eye(N) * lamb
-        B = B - naive_toa * lamb
+        A = A + sp.diags(toa_weights)
+        B = B - naive_toa * toa_weights
         solver = sp.linalg.spsolve
     else:
         B = B + lamb
@@ -74,12 +75,6 @@ def smooth_toa_l2_core(
     toa = solver(A, -B)
     elapsed_time = time.time() - start_time
 
-    # print(f"Sparseness: {len(sp.find(A)[0]) / (N * N)}")
-    # print(f"Matrix shape: {matrix_shape}")
-    # print(f"Elapsed time: {elapsed_time} s")
-    # if naive_toa is None:
-    #     toa, lambda_ = toa[:-1], toa[-1]
-    #     print(f"Lambda: {lambda_}")
     return toa, matrix_shape, elapsed_time
 
 
@@ -354,6 +349,7 @@ def smooth_toa(
             differences,
             weights,
             naive_toa=None if ignore_toa else naive_toa.T.flatten(),
+            toa_weights=None if ignore_toa else toa_weights,
             lamb=toa_weight,
         )
         toa = toa.reshape((2, N)).T
@@ -488,6 +484,7 @@ def _lr_separate_toa(
             left_grid_weights,
             naive_toa=None if naive_toa is None else naive_toa[:, 0],
             lamb=lamb,
+            toa_weights=None if toa_weights is None else toa_weights[:N],
         )
         right_toa, matrix_shape, rt = smooth_toa_l2_core(
             sphere_edges,
@@ -495,6 +492,7 @@ def _lr_separate_toa(
             right_grid_weights,
             naive_toa=None if naive_toa is None else naive_toa[:, 1],
             lamb=lamb,
+            toa_weights=None if toa_weights is None else toa_weights[N:],
         )
         t = lt + rt
         toa = np.stack((left_toa, right_toa), axis=1)
