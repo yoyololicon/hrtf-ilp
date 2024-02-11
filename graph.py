@@ -56,14 +56,14 @@ def points2graph(points: np.ndarray, stereo_proj: bool = False):
     # create graph
     if stereo_proj:
         z = points[:, 2]
-        if not np.all(z < 1) and np.all(z > -1):
+        if (not np.all(z < 1)) and np.all(z > -1):
             points = -points
         else:
             raise ValueError(
                 f"z values must be in (-1, 1), but got ({z.min()}, {z.max()})"
             )
         points_proj = stereographic_projection(points)
-        hull = Delaunay(points_proj)
+        hull = Delaunay(points_proj, qhull_options="QJ")
     else:
         hull = ConvexHull(points)
     edges = np.vstack(
