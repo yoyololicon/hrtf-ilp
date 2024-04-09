@@ -2,21 +2,10 @@ import numpy as np
 from scipy.optimize import curve_fit
 from scipy.signal import hilbert
 import sound_field_analysis as sfa
-from functools import partial
 from typing import Tuple
 
 
 __all__ = ["toa_model", "get_rigid_params", "hrtf_toa"]
-
-
-def hrtf_toa(hrir: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    hrtf = np.fft.fft(hrir, axis=-1)
-    log_mag = np.log(hrtf).real
-    min_phase = -np.imag(hilbert(log_mag))
-    min_hrtf = np.exp(log_mag + 1j * min_phase)
-    corr = np.fft.ifft(hrtf * min_hrtf.conj()).real
-    toa = np.argmax(corr, axis=-1)
-    return toa, corr.max(axis=-1)
 
 
 def toa_model(P, r, az0, az1, incli0, incli1, delta, sr):

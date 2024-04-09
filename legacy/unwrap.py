@@ -10,7 +10,7 @@ from scipy.spatial import ConvexHull, Delaunay
 import networkx as nx
 
 from graph import *
-from rigid import *
+from legacy.rigid import *
 from linprog import solve_linprog
 
 
