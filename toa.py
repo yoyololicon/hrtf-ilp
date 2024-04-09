@@ -9,7 +9,7 @@ import time
 
 from legacy.rigid import hrtf_toa
 from graph import stereographic_projection
-from linprog import solve_linprog, solve_quadprog, solve_linprog_ez
+from linprog import solve_linprog, solve_linprog_ez
 from utils import has_hole_at_the_bottom
 
 
@@ -276,7 +276,7 @@ def smooth_toa(
     )
     weights = np.concatenate((cross_weights, left_grid_weights, right_grid_weights))
 
-    if method == "ilp" or method == "qlp":
+    if method == "ilp":
         if not ignore_toa:
             simplices.extend([[-1, u, v] for u, v in sphere_edges])
             simplices.extend([[-1, u, v] for u, v in sphere_edges + N])
@@ -308,14 +308,10 @@ def smooth_toa(
             print(f"Number of edges: {len(edges)}")
 
         start_time = time.time()
-        if method == "qlp":
-            k = solve_quadprog(
-                edges, simplices, differences, c=weights if weighted else None
-            )
-        else:
-            k = solve_linprog(
-                edges, simplices, differences, c=weights if weighted else None
-            )
+
+        k = solve_linprog(
+            edges, simplices, differences, c=weights if weighted else None
+        )
 
         finer_G = nx.DiGraph()
         for i in range(edges.shape[0]):
@@ -391,7 +387,7 @@ def _lr_separate_toa(
 ):
     N = np.max(sphere_edges) + 1
 
-    if method == "ilp" or method == "qlp":
+    if method == "ilp":
         if naive_toa is not None:
             edges = np.concatenate(
                 (
@@ -434,12 +430,9 @@ def _lr_separate_toa(
             right_diff = right_grid_diff
 
         start_time = time.time()
-        if method == "qlp":
-            left_k = solve_quadprog(edges, simplices, left_diff, c=left_weights)
-            right_k = solve_quadprog(edges, simplices, right_diff, c=right_weights)
-        else:
-            left_k = solve_linprog(edges, simplices, left_diff, c=left_weights)
-            right_k = solve_linprog(edges, simplices, right_diff, c=right_weights)
+
+        left_k = solve_linprog(edges, simplices, left_diff, c=left_weights)
+        right_k = solve_linprog(edges, simplices, right_diff, c=right_weights)
 
         finer_G_l = nx.DiGraph()
         finer_G_r = nx.DiGraph()
