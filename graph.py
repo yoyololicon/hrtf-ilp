@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.spatial import ConvexHull, Delaunay
 import networkx as nx
-from typing import Callable, Tuple, Union, List, Dict, Any, Optional
 
 __all__ = ["points2graph", "plus_freq_dim", "stereographic_projection"]
 

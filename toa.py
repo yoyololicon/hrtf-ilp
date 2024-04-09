@@ -3,13 +3,24 @@ import numpy as np
 from soxr import resample
 from scipy.spatial import ConvexHull, Delaunay
 from scipy import sparse as sp
-from typing import Tuple, Iterable
+from scipy.signal import hilbert
+from typing import Iterable, Tuple
 import time
 
-from rigid import hrtf_toa
+from legacy.rigid import hrtf_toa
 from graph import stereographic_projection
 from linprog import solve_linprog, solve_quadprog, solve_linprog_ez
 from utils import has_hole_at_the_bottom
+
+
+def hrtf_toa(hrir: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    hrtf = np.fft.fft(hrir, axis=-1)
+    log_mag = np.log(hrtf).real
+    min_phase = -np.imag(hilbert(log_mag))
+    min_hrtf = np.exp(log_mag + 1j * min_phase)
+    corr = np.fft.ifft(hrtf * min_hrtf.conj()).real
+    toa = np.argmax(corr, axis=-1)
+    return toa, corr.max(axis=-1)
 
 
 def simplices2edges(simplices: Iterable[Iterable[int]]) -> np.ndarray:

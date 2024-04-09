@@ -4,7 +4,6 @@ import numpy as np
 import sound_field_analysis as sfa
 from pathlib import Path
 import yaml
-from functools import partial, reduce
 from itertools import starmap, product
 from tqdm import tqdm
 

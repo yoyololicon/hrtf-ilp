@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import linprog
-from scipy.sparse import csr_matrix, eye, diags
+from scipy.sparse import csr_matrix
 from typing import Iterable
 
 
