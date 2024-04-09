@@ -1,0 +1,7 @@
+numpy
+scipy
+soxr
+sound_field_analysis
+spaudiopy
+networkx
+tqdm
