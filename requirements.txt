@@ -5,3 +5,5 @@ sound_field_analysis
 spaudiopy
 networkx
 tqdm
+pandas
+matplotlib
