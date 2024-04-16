@@ -17,11 +17,10 @@ Given a single HRTF sofa file, `preprocess.py` will compute its TOAs using 36 di
 ```bash
 python preprocess.py input.sofa output_folder --toa-weight 0.1 --oversampling 10
 ```
-Here, `--toa-weight` controls the value of $\lambda$ and $w_{\delta, i}$ for exponential weighting in the paper.
+Here, `--toa-weight` controls the value of $\lambda$ and $w_{\delta, i}$ of exponential weighting in the paper.
 The output npz files has the format of `{edgeslist/ilp/l2}_toa_{True/False}_cross_{True/False}_{angle/dot/none}.npz`.
 They corresponds to the terms in the paper as follows:
 
-<!-- make a markdown table, one column for the name here and one column for ther paper terms -->
 | Name | Name in ther paper |
 |:------:|:--------------------:|
 | edgeslist | EDGY |
