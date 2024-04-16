@@ -1,6 +1,5 @@
 import numpy as np
 from spaudiopy.utils import cart2sph
-
 from spaudiopy.sph import sh_matrix
 
 

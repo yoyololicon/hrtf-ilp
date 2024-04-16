@@ -7,7 +7,6 @@ from scipy.signal import hilbert
 from typing import Iterable, Tuple
 import time
 
-from legacy.rigid import hrtf_toa
 from graph import stereographic_projection
 from linprog import solve_linprog, solve_linprog_ez
 from utils import has_hole_at_the_bottom
