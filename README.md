@@ -41,3 +41,9 @@ They corresponds to the terms in the paper as follows:
 
 Please create a folder named `processed` and put the preprocessed directories in it.
 Then, execute the notebook [visualise](visualise.ipynb) to see the results.
+
+### Noise robustness
+
+Please execute the notebook [noise-robust](noise-robust.ipynb) to see the results.
+The notebook include the code to generate Figure 2 in the paper.
+Changing the sofa file to the one you want to test will generate the results for the given HRTF.
