@@ -33,3 +33,11 @@ They corresponds to the terms in the paper as follows:
 | angle | EXP |
 | dot | CORR |
 | none | NONE |
+
+
+## Experiments
+
+### ITD/aligned-HRIRs reconstruction
+
+Please create a folder named `processed` and put the preprocessed directories in it.
+Then, execute the notebook [visualise](visualise.ipynb) to see the results.
