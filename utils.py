@@ -28,3 +28,15 @@ def lsd(pred, target):
     pred = np.abs(pred) + 1e-16
     target = np.abs(target) + 1e-16
     return 20 * np.abs(np.log10(pred) - np.log10(target))
+
+
+def phase2delay(phase, freqs, sr):
+    return -phase / (freqs / sr * 2 * np.pi)
+
+
+def delay2phase(delay, freqs, sr):
+    return -delay * (freqs / sr * 2 * np.pi)
+
+
+def wrap(x):
+    return (x + np.pi) % (2 * np.pi) - np.pi

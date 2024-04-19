@@ -14,18 +14,6 @@ from legacy.rigid import *
 from linprog import solve_linprog
 
 
-def phase2delay(phase, freqs, sr):
-    return -phase / (freqs / sr * 2 * np.pi)
-
-
-def delay2phase(delay, freqs, sr):
-    return -delay * (freqs / sr * 2 * np.pi)
-
-
-def wrap(x):
-    return (x + np.pi) % (2 * np.pi) - np.pi
-
-
 def puma(psi, edges, max_jump=1, p=1, verbose=False):
     if max_jump > 1:
         jump_steps = list(range(1, max_jump + 1)) * 2
@@ -279,9 +267,9 @@ def ilp_unwrap(
                 result[v] = result[u] + finer_G[u][v]["weight"] * 2 * np.pi
 
         result = result.reshape(chunk_length, N).T
-        unwrapped_phase[
-            :, max(fixed_bin_index, 0) : fixed_bin_index + chunk + 1
-        ] = result
+        unwrapped_phase[:, max(fixed_bin_index, 0) : fixed_bin_index + chunk + 1] = (
+            result
+        )
 
         fixed_bin_index += chunk
 
