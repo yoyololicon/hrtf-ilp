@@ -53,6 +53,7 @@ Changing the sofa file to the one you want to test will generate the results for
 
 Please execute the notebook [phase-unwrapping](phase-unwrapping.ipynb) to see the results.
 The notebook includes the code to generate Figure 4 and 5 in the paper.
+The notebook uses [kamui](https://github.com/yoyololicon/kamui) for ILP-based unwrapping.
 
 
 ## Citation
