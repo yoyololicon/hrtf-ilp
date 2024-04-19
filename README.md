@@ -1,10 +1,11 @@
 # Time-of-arrival estimation and phase unwrapping of HRTF with integer linear programming
 
-Source code of the papers [_Time-of-arrival estimation and phase unwrapping of head-related transfer functions with integer linear programming_]() (AES Convention 156) and [_Arbitrarily Sampled Signal Reconstruction Using Relative Difference Features_]() (GSP Workshop 2024).
+Source code of the papers [_Time-of-arrival estimation and phase unwrapping of head-related transfer functions with integer linear programming_]() (AES Convention 156) and [_Arbitrarily sampled signal reconstruction using relative difference features_](pdf/gsp_paper.pdf) (GSP Workshop 2024).
 
 
 ## Getting started
 
+Please install the required packages by running the following command.
 You'll need to have Python >=3.11 installed on your system. 
 ```bash
 pip install -r requirements.txt
@@ -52,3 +53,8 @@ Changing the sofa file to the one you want to test will generate the results for
 
 Please execute the notebook [phase-unwrapping](phase-unwrapping.ipynb) to see the results.
 The notebook includes the code to generate Figure 4 and 5 in the paper.
+
+
+## Citation
+
+Coming soon.
