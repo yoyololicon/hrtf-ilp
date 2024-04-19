@@ -40,10 +40,15 @@ They corresponds to the terms in the paper as follows:
 ### ITD/aligned-HRIRs reconstruction
 
 Please create a folder named `processed` and put the preprocessed directories in it.
-Then, execute the notebook [visualise](visualise.ipynb) to see the results.
+Then, execute the notebook [eval](eval.ipynb) to evaluate the estimated TOAs.
 
 ### Noise robustness
 
 Please execute the notebook [noise-robust](noise-robust.ipynb) to see the results.
-The notebook include the code to generate Figure 2 in the paper.
+The notebook includes the code to generate Figure 2 in the paper.
 Changing the sofa file to the one you want to test will generate the results for the given HRTF.
+
+### Phase unwrapping
+
+Please execute the notebook [phase-unwrapping](phase-unwrapping.ipynb) to see the results.
+The notebook includes the code to generate Figure 4 and 5 in the paper.
