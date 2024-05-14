@@ -1,6 +1,6 @@
 # Time-of-arrival estimation and phase unwrapping of HRTF with integer linear programming
 
-Source code of the papers [_Time-of-arrival estimation and phase unwrapping of head-related transfer functions with integer linear programming_]() (AES Convention 156) and [_Arbitrarily sampled signal reconstruction using relative difference features_](pdf/gsp_paper.pdf) (GSP Workshop 2024).
+Source code of the papers [_Time-of-arrival estimation and phase unwrapping of head-related transfer functions with integer linear programming_](https://arxiv.org/abs/2405.06804) (AES Convention 156) and [_Arbitrarily sampled signal reconstruction using relative difference features_](pdf/gsp_paper.pdf) (GSP Workshop 2024).
 
 
 ## Getting started
@@ -58,4 +58,15 @@ The notebook uses [kamui](https://github.com/yoyololicon/kamui) for ILP-based un
 
 ## Citation
 
-Coming soon.
+If you use our work in your research, please cite it with the following BibTex entry:
+
+```bibtex
+@misc{ycy2024hrtf,
+    title={Time-of-arrival Estimation and Phase Unwrapping of Head-related Transfer Functions With Integer Linear Programming},
+    author={Chin-Yun Yu and Johan Pauwels and György Fazekas},
+    year={2024},
+    eprint={2405.06804},
+    archivePrefix={arXiv},
+    primaryClass={cs.SD}
+}
+```
